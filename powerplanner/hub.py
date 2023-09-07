@@ -1,6 +1,5 @@
 """The hub  for powerplanner."""
 from datetime import datetime
-
 import aiohttp
 import pytz
 
@@ -14,13 +13,13 @@ class PowerplannerHub:
         self.schedules = None
         self.plans = None
         self.updated: datetime
-        self.plansChanged = False
-        self.changeCallback = None
-        self.addSensorCallback  = None
-        self.removeSensorCallback = None
+        self.plans_changed = False
+        self.change_callback = None
+        self.add_sensor_callback  = None
+        self.remove_sensor_callback = None
         self.sensors: list[any] = []
-        self.oldPlans: list[str] = []
-        self.newPlans: list[str] = []
+        self.old_plans: list[str] = []
+        self.new_plans: list[str] = []
 
     async def __fetch(self, read: bool = False) -> aiohttp.ClientResponse:
         async with aiohttp.ClientSession() as session, session.get(
@@ -37,22 +36,36 @@ class PowerplannerHub:
 
         self.schedules = json["schedules"]
         self.updated = datetime.now()
-        updatedPlans = list(self.schedules)
-        self.newPlans = self._getNewPlans(updatedPlans, self.plans)
-        self.oldPlans = self._getRemovedPlans(updatedPlans, self.plans)
-        self.plansChanged = self.oldPlans is not None or self.newPlans is not None
-        self.plans = updatedPlans
+        updated_plans = list(self.schedules)
+        self.new_plans = self._get_new_plans(updated_plans, self.plans)
+        self.old_plans = self._get_removed_plans(updated_plans, self.plans)
+        self.plans_changed = self.old_plans is not None or self.new_plans is not None
+        self.plans = updated_plans
 
         return json
+    
+    def get_next_change(self, name: str) -> datetime | None:
+        """Get the time the next change is with the plan."""
+        if name not in self.plans:
+            return None
 
-    def addSensor(self, sensor):
+        current_value = self._current_value(name)
+        next_value = self._next_value(name, not current_value)
+
+        if next_value is None:
+            return None
+
+        current_time = self._current_time()
+        return self._parse_time(next_value["startTime"], current_time.tzinfo)
+
+    def add_sensor(self, sensor):
         self.sensors.append(sensor)
-        self.addSensorCallback([sensor])
+        self.add_sensor_callback([sensor])
 
-    async def removeSensor(self, sensorName: str):
+    async def remove_sensor(self, sensor_name: str):
         found = None
         for sensor in self.sensors:
-            if sensor.scheduleName == sensorName:
+            if sensor.schedule_name == sensor_name:
                 found = sensor
                 break
 
@@ -62,19 +75,12 @@ class PowerplannerHub:
         await found.async_remove()
         self.sensors.remove(found)
 
-    def timeToChange(self, name) -> int:
-        if name not in self.plans:
+    def time_to_change(self, name) -> int:
+        change_time = self.get_next_change(name)
+        if(change_time is datetime.max):
             return 0
-
-        currentValue = self._currentValue(name)
-        nextValue = self._nextValue(name, not currentValue)
-
-        if nextValue is None:
-            return 0
-
-        currentTime = self._currentTime()
-        changeTime = self._parseTime(nextValue["startTime"], currentTime.tzinfo)
-        delta = changeTime - self._currentTime()
+        
+        delta = change_time - self._current_time()
 
         return delta.seconds
 
@@ -82,26 +88,26 @@ class PowerplannerHub:
         if self.schedules is None or name not in self.plans:
             return False
 
-        nowStr = self._currentTimeStr()
+        now_str = self._current_time_str()
         schedule = list(self.schedules[name])
 
-        filetered = list(filter(lambda x: x["enabled"] is True, schedule))
-        filetered = list(filter(lambda x: x["startTime"] <= nowStr, filetered))
-        filetered = list(filter(lambda x: x["endTime"] > nowStr, filetered))
-        return len(filetered) > 0
+        filtered = list(filter(lambda x: x["enabled"] is True, schedule))
+        filtered = list(filter(lambda x: x["startTime"] <= now_str, filtered))
+        filtered = list(filter(lambda x: x["endTime"] > now_str, filtered))
+        return len(filtered) > 0
 
     async def authenticate(self) -> bool:
         """Test if we can authenticate with the host."""
         resp = await self.__fetch()
         return resp.status == 200
 
-    def _getNewPlans(self, newPlans, oldPlans) -> list[str]:
-        return self._getMissing(newPlans, oldPlans)
+    def _get_new_plans(self, new_plans, old_plans) -> list[str]:
+        return self._get_missing(new_plans, old_plans)
 
-    def _getRemovedPlans(self, newPlans, oldPlans):
-        return self._getMissing(oldPlans, newPlans)
+    def _get_removed_plans(self, new_plans, old_plans):
+        return self._get_missing(old_plans, new_plans)
 
-    def _getMissing(self, a, b) -> list[str]:
+    def _get_missing(self, a, b) -> list[str]:
         result = []
 
         if a is None:
@@ -121,34 +127,34 @@ class PowerplannerHub:
 
         return result
 
-    def _currentValue(self, name) -> bool:
-        nowStr = self._currentTimeStr()
+    def _current_value(self, name) -> bool:
+        now_str = self._current_time_str()
         schedule = list(self.schedules[name])
 
-        filetered = list(filter(lambda x: x["startTime"] <= nowStr, schedule))
-        filetered = list(filter(lambda x: x["endTime"] > nowStr, filetered))
+        filetered = list(filter(lambda x: x["startTime"] <= now_str, schedule))
+        filetered = list(filter(lambda x: x["endTime"] > now_str, filetered))
         if len(filetered) == 0:
             return False
         return filetered[0]["enabled"]
 
-    def _nextValue(self, name, value: bool):
-        nowStr = self._currentTimeStr()
+    def _next_value(self, name, value: bool):
+        now_str = self._current_time_str()
         schedule = list(self.schedules[name])
 
         filetered = list(filter(lambda x: x["enabled"] == value, schedule))
-        filetered = list(filter(lambda x: x["startTime"] > nowStr, filetered))
+        filetered = list(filter(lambda x: x["startTime"] > now_str, filetered))
         if len(filetered) == 0:
             return None
         return filetered[0]
 
-    def _currentTime(self):
+    def _current_time(self):
         return datetime.now(tz=pytz.timezone("Europe/Stockholm"))
 
-    def _currentTimeStr(self):
-        nowStr = self._currentTime().strftime("%Y-%m-%dT%H:%M:%S")
-        return nowStr
+    def _current_time_str(self):
+        now_str = self._current_time().strftime("%Y-%m-%dT%H:%M:%S")
+        return now_str
 
-    def _parseTime(self, string: str, tzInfo):
+    def _parse_time(self, string: str, tz_info):
         time = datetime.strptime(
             string,
             "%Y-%m-%dT%H:%M:%S",
@@ -161,5 +167,5 @@ class PowerplannerHub:
             time.hour,
             time.minute,
             time.second,
-            tzinfo=tzInfo,
+            tzinfo=tz_info,
         )
