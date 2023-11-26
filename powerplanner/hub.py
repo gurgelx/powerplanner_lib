@@ -77,7 +77,7 @@ class PowerplannerHub:
 
     def time_to_change(self, name) -> int:
         change_time = self.get_next_change(name)
-        if(change_time is datetime.max):
+        if(change_time is datetime.max or change_time is None):
             return 0
         
         delta = change_time - self._current_time()
