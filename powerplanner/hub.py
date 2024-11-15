@@ -3,15 +3,27 @@ from datetime import datetime
 import aiohttp
 import pytz
 
+from .api_client import ApiClient
+
 class PowerplannerHub:
     """Hub for powerplanner."""
 
     manufacturer = "NomKon AB"
+    url = "https://www.powerplanner.se"
 
-    def __init__(self, api_key: str) -> None:
+    def __init__(self, api_key: str, url: str = None) -> None:
+        
+        self.use_ssl = True
+        
+        if(url is not None):
+            self.url = url
+            self.use_ssl = False
+        
+        self.api_client = ApiClient(self.url, api_key, self.use_ssl)
         self.api_key = api_key
         self.schedules = None
         self.plans = None
+        self.plan_names = None
         self.updated: datetime
         self.plans_changed = False
         self.change_callback = None
@@ -21,32 +33,29 @@ class PowerplannerHub:
         self.old_plans: list[str] = []
         self.new_plans: list[str] = []
 
-    async def __fetch(self, read: bool = False) -> aiohttp.ClientResponse:
-        async with aiohttp.ClientSession() as session, session.get(
-            "https://www.powerplanner.se/api/scheme/?token=" + self.api_key
-        ) as resp:
-            if read:
-                await resp.read()
-            return resp
-
     async def update(self) -> None:
-        """Update all schedules."""
-        resp = await self.__fetch(True)
-        json = await resp.json()
-
-        self.schedules = json["schedules"]
+        """Update all schedules."""        
+        self.schedules = await self.api_client.get_schedules()
         self.updated = datetime.now()
         updated_plans = list(self.schedules)
-        self.new_plans = self._get_new_plans(updated_plans, self.plans)
-        self.old_plans = self._get_removed_plans(updated_plans, self.plans)
+        self.new_plans = self._get_new_plans(updated_plans, self.plan_names)
+        self.old_plans = self._get_removed_plans(updated_plans, self.plan_names)
         self.plans_changed = self.old_plans is not None or self.new_plans is not None
-        self.plans = updated_plans
-
-        return json
+        self.plan_names = updated_plans
+        if(self.plans_changed):
+            self.plans = await self.api_client.get_plans()
+    
+    async def toggle(self, plan_id: str, enabled: bool) -> None:
+        await self.api_client.toggle_plan(plan_id, enabled)
+        await self.update()
+    
+    async def set_property(self, plan_id: str, property_key: str, value: any) -> None:
+        await self.api_client.set_plan_property(plan_id, property_key, value)
+        await self.update()
     
     def get_next_change(self, name: str) -> datetime | None:
         """Get the time the next change is with the plan."""
-        if name not in self.plans:
+        if name not in self.plan_names:
             return None
 
         current_value = self._current_value(name)
@@ -85,7 +94,7 @@ class PowerplannerHub:
         return delta.seconds
 
     def is_on(self, name) -> bool:
-        if self.schedules is None or name not in self.plans:
+        if self.schedules is None or name not in self.plan_names:
             return False
 
         now_str = self._current_time_str()
@@ -98,8 +107,7 @@ class PowerplannerHub:
 
     async def authenticate(self) -> bool:
         """Test if we can authenticate with the host."""
-        resp = await self.__fetch()
-        return resp.status == 200
+        return await self.api_client.authenticate()        
 
     def _get_new_plans(self, new_plans, old_plans) -> list[str]:
         return self._get_missing(new_plans, old_plans)

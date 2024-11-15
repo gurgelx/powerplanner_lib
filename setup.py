@@ -5,7 +5,7 @@ with open("README.md", "r") as f:
 
 setup(
     name="powerplanner-lib",
-    version="0.0.8",
+    version="0.0.11",
     author="Gustaf Brahme",    
     description="Client package to access powerplanner API",
     long_description=long_description,

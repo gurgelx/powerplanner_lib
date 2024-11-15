@@ -10,6 +10,12 @@ Fetches all schedules from the powerplanner API and returns the raw json result
 If there is removed or added plans these will be available in the "new_plans" & "old_plans" variable
 The "plans_changed" variable will also be true.
 
+#### toggle(plan_id: str, enabled:bool)
+Enables or disables a plan and updates the schedules
+
+#### set_property(plan_id: str, property_key: str, value: any)
+Updates a dynamic rule value on a plan
+
 #### get_next_change(name: str)
 returns when a plan will change its enabled status
 
